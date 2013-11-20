@@ -15,6 +15,7 @@ public abstract class Globals {
 	// Motion sensor buffering related consts 
 	public static final int ACCELEROMETER_BUFFER_CAPACITY = 2048;
 	public static final int ACCELEROMETER_BLOCK_CAPACITY = 64;
+	public static final int TEMPERATURE_BUFFER_CAPCITY = 64;
 	
 	//data collection parameters
 	public static final long DATA_COLLECTOR_START_DELAY = 2 * Globals.ONE_SECOND;

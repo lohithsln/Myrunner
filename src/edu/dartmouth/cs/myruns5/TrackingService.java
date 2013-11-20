@@ -7,12 +7,15 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.SortedSet;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 
 import weka.core.Attribute;
@@ -23,6 +26,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -38,6 +42,12 @@ import android.os.IBinder;
 import android.util.Log;
 import android.widget.Toast;
 import edu.dartmouth.cs.myruns5.util.LocationUtils;
+
+
+import org.apache.http.*;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.util.EntityUtils;
 
 public class TrackingService extends Service
 	implements LocationListener, SensorEventListener
@@ -65,13 +75,17 @@ public class TrackingService extends Service
 	private SensorManager mSensorManager;
 	private Sensor mAccelerometer;
 	private Sensor mLightSensor;
+	private Sensor mTempSensor;
 	
 	private float[] mGeomagnetic;
 	private static ArrayBlockingQueue<Double> mAccBuffer;
 	private static ArrayBlockingQueue<LumenDataPoint> mLightIntensityReadingBuffer;
+	// Buffer for temperature readings
+	private static ArrayBlockingQueue<Double> mTempBuffer;
+	
 	private AccelerometerActivityClassificationTask mAccelerometerActivityClassificationTask;
 	private LightSensorActivityClassificationTask mLightSensorActivityClassificationTask;
-
+	private TemperatureSensorActivityClassificationTask mTempSensorActivityClassificationTask;
 	
 	private final IBinder mBinder = new TrackingBinder();
 
@@ -90,6 +104,15 @@ public class TrackingService extends Service
 	public static final String ACTION_TRACKING = "tracking action";
 
 	private static final String TAG = "TrackingService";
+	
+	// Variables added by lohith.
+	private double totalAcceleration;
+
+	private double avgAcceleration;
+	private double timeDuration;
+	private double initialVelocity;
+	private String temperature;
+	private String humidity;
 	
 	private static Timer dataCollector;
   	private TimerTask dataCollectorTask = new TimerTask() {
@@ -114,13 +137,22 @@ public class TrackingService extends Service
 		mMotionUpdateBroadcast.setAction(ACTION_MOTION_UPDATE);
 		mLightIntensityReadingBuffer = new ArrayBlockingQueue<LumenDataPoint>(Globals.LIGHT_BUFFER_CAPACITY);
 		mAccBuffer = new ArrayBlockingQueue<Double>(Globals.ACCELEROMETER_BUFFER_CAPACITY);
+		mTempBuffer = new ArrayBlockingQueue<Double>(Globals.TEMPERATURE_BUFFER_CAPCITY);
 		mAccelerometerActivityClassificationTask = new AccelerometerActivityClassificationTask();
 		mLightSensorActivityClassificationTask = new LightSensorActivityClassificationTask();
+		mTempSensorActivityClassificationTask = new TemperatureSensorActivityClassificationTask();
 		mInferredActivityType = Globals.ACTIVITY_TYPE_STANDING;
 		
 		//Start the timer for data collection
 		dataCollector = new Timer();
 		dataCollector.scheduleAtFixedRate(dataCollectorTask, Globals.DATA_COLLECTOR_START_DELAY, Globals.DATA_COLLECTOR_INTERVAL);
+		
+		//Added by lohith
+		avgAcceleration = 0;
+		timeDuration = 5000;
+		initialVelocity = 0;
+		// the weather variables have to be intialized by the API call only. we cant set them to 0.
+		// Get the weather details - this should set the varial
 	}
 
 	@Override
@@ -159,8 +191,8 @@ public class TrackingService extends Service
 	    if (mInputType == Globals.INPUT_TYPE_AUTOMATIC){
 	    	// init sensor manager
 	    	mSensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+	    
 	    	mAccelerometer = mSensorManager .getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
-		
 	    	// register listener
 	    	mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_FASTEST);
 	    	mAccelerometerActivityClassificationTask.execute();
@@ -168,6 +200,11 @@ public class TrackingService extends Service
 	    	//JERRID: Register light Sensor
 			mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
 			mSensorManager.registerListener(this, mLightSensor,SensorManager.SENSOR_DELAY_FASTEST);
+			
+			mTempSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_TEMPERATURE);
+			mSensorManager.registerListener(this, mTempSensor, SensorManager.SENSOR_DELAY_FASTEST);
+			
+			mTempSensorActivityClassificationTask.execute();
 	    }
 	    
 		// Using pending intent to bring back the MapActivity from notification center.
@@ -210,6 +247,7 @@ public class TrackingService extends Service
 	    
 	    // cancel task
 	    mAccelerometerActivityClassificationTask.cancel(true);
+	    mTempSensorActivityClassificationTask.cancel(true);
 	}
 	
 	public class TrackingBinder extends Binder{
@@ -267,11 +305,17 @@ public class TrackingService extends Service
 	public void onSensorChanged(SensorEvent event) {
 //		Toast.makeText(getApplicationContext(), "onSensorChanged", Toast.LENGTH_SHORT).show();
 		 // Many sensors return 3 values, one for each axis.
-		
+		if(event.sensor.getType() == Sensor.TYPE_TEMPERATURE) {
+			// Get temperature readings.
+			float[] temperatureArr = event.values;
+			//  Check for ambient temperature and log the same.
+			double temp = temperatureArr[0];
+			mTempBuffer.add(temp);
+		}
 
 		if(trackFile == null) {
 			File sdCard = Environment.getExternalStorageDirectory();  
-			String resultPredictor = sdCard.getAbsolutePath()  + "/keepTrack.txt";    
+			String resultPredictor = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/keepTrack.txt";     
 			File resultFile;
 			try {
 				resultFile = new File(resultPredictor);
@@ -345,6 +389,12 @@ public class TrackingService extends Service
 	              }
 	          }
 //			Toast.makeText(getApplicationContext(), String.valueOf(mAccBuffer.size()), Toast.LENGTH_SHORT).show();
+		} else if(event.sensor.getType() == Sensor.TYPE_TEMPERATURE) {
+			// Get temperature readings.
+			float[] temperatureArr = event.values;
+			//  Check for ambient temperature and log the same.
+			double temp = temperatureArr[0];
+			mTempBuffer.add(temp);
 		}
 	}
 
@@ -495,20 +545,39 @@ public class TrackingService extends Service
 			double currentLeadCount = Double.MIN_VALUE;
 			int currentTrend = Integer.MIN_VALUE;
 			FileOutputStream predictionFile = null;
+			FileOutputStream accelerometerValueFileStream = null;
+			FileOutputStream accelerometerMedianFileStream = null;
+			
+			double sumForMean = 0;
 			
 			// Memory card path.
 			File sdCard = Environment.getExternalStorageDirectory();
 			// Application path.
     		String resultPredictor = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/predicted.txt";    
+    		String accelerometerValueLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/allValues.txt";
+    		String accelerometerMedianLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/medianValues.txt";
     		
-    		
+    		SortedSet accelerometerReadings = new TreeSet();
+    		Double[] accelerometerReadingArray;
     		File resultFile;
+    		File accelerometerLogFile;
+    		File accelerometerMedianFile;
 			try {
 				resultFile = new File(resultPredictor);
 				resultFile.createNewFile();
 				predictionFile = new FileOutputStream(resultFile);
 				 predictionFile.write("starting write".getBytes());
                  predictionFile.flush();
+                 
+                 accelerometerLogFile = new File(accelerometerValueLogger);
+                 accelerometerLogFile.createNewFile();
+                 accelerometerValueFileStream = new FileOutputStream(accelerometerLogFile);
+                 
+                 accelerometerMedianFile = new File(accelerometerMedianLogger);
+                 accelerometerMedianFile.createNewFile();
+                 accelerometerMedianFileStream = new FileOutputStream(accelerometerMedianFile);
+                 
+                  
 			} catch (Exception e) {
 				e.printStackTrace();
 			}
@@ -528,7 +597,9 @@ public class TrackingService extends Service
 						//mMotionUpdateBroadcast.putExtra(VOTED_MOTION_TYPE, finalInferredType);
 						//sendBroadcast(mMotionUpdateBroadcast);
 						try {
+							
 							predictionFile.close();
+							
 						} catch (Exception e) {
 							e.printStackTrace();
 						}
@@ -539,8 +610,12 @@ public class TrackingService extends Service
 					
 					// Dumping buffer
 					double accelValue = mAccBuffer.take().doubleValue();
-					accBlock[blockSize++] = accelValue;
+					//String temp = String.valueOf(accelValue);
+					//String temp2 = temp.substring(0,6);
+					//accelerometerValueFile.write((temp2 + ",").getBytes());
+					//accelerometerValueFile.flush();
 					
+					accBlock[blockSize++] = accelValue;
 					
 					// JERRID: Pops the "head" element from the Blocking Queue one at a time
 					if(accelValue > max)
@@ -565,6 +640,29 @@ public class TrackingService extends Service
 						fft.fft(re, im);
 						for (int i = 0; i < re.length; i++) {
 							double mag = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+							accelerometerReadings.add(mag);
+							String temp = String.valueOf(mag);
+							String temp2 = temp.substring(0,6);
+							accelerometerValueFileStream.write((temp2 + ",").getBytes());
+							accelerometerValueFileStream.flush();
+							
+							accelerometerReadingArray =
+									Arrays.copyOf(
+											accelerometerReadings.toArray(),
+											accelerometerReadings.toArray().length, 
+											Double[].class
+											);
+							int medianIndex = (accelerometerReadingArray.length)/2;
+							double median = accelerometerReadingArray[medianIndex];
+							accelerometerMedianFileStream.write(("\n Median was:" + median).getBytes());
+							accelerometerMedianFileStream.flush();
+							
+							sumForMean = sumForMean + mag;
+							accelerometerMedianFileStream.write(("\n Mean was:" + (sumForMean/accelerometerReadingArray.length)).getBytes());
+							accelerometerMedianFileStream.flush();
+							
+							accelerometerMedianFileStream.write(("\n Current count is:" + (accelerometerReadingArray.length)).getBytes());
+							accelerometerMedianFileStream.flush();
 							featVect.add(mag);
 							im[i] = .0; // Clear the field
 						}
@@ -716,8 +814,82 @@ public class TrackingService extends Service
 				}		
 			}
 		}
+		
+		// New code - added by lohith 
+		// Calculates final velocity based upong avg accleration and initial velocity.
+		// To be called periodically.
+		private double CalculateFinalVelocity() {
+			avgAcceleration = 0;
+			timeDuration = 5000;
+			initialVelocity = 0;
+			
+			double currentVelocity = initialVelocity + (avgAcceleration * timeDuration);
+			return currentVelocity;
+		}
+		
+		// Added by lohith
+		// Periodically queries the yahoo API to get the weather details.
+		// to be called once per minute
+		// Get the temperature and humidity.
+		private void getWeatherDetails() {
+			@SuppressWarnings("deprecation")
+			DefaultHttpClient httpclient = new DefaultHttpClient();
+		    try {
+		      // specify the host, protocol, and port
+		      HttpHost target = new HttpHost("weather.yahooapis.com", 80, "http");
+
+		      // specify the get request
+		      HttpGet getRequest = new HttpGet("/forecastrss?p=80020&u=c");
+
+		      //System.out.println("executing request to " + target);
+
+		      HttpResponse httpResponse = httpclient.execute(target, getRequest);
+		      HttpEntity entity = httpResponse.getEntity();
+
+		      Header[] headers = httpResponse.getAllHeaders();
+		   
+		      if (entity != null) {
+		        //System.out.println(EntityUtils.toString(entity));
+		    	  String obtainedData = EntityUtils.toString(entity);
+		    	  
+		    	  // Get temperature
+		    	  int tempIndex = obtainedData.indexOf("temp=");
+		    	  temperature = obtainedData.substring(tempIndex+6, tempIndex+8);
+		    	  
+		    	  // Get humidity
+		    	  int humidityIndex = obtainedData.indexOf("humidity=");
+		    	  humidity = obtainedData.substring(humidityIndex+10, humidityIndex+12);
+		    	  
+		      }
+
+		    } catch (Exception e) {
+		      e.printStackTrace();
+		    } finally {
+		      // When HttpClient instance is no longer needed,
+		      // shut down the connection manager to ensure
+		      // immediate deallocation of all system resources
+		      httpclient.getConnectionManager().shutdown();
+		    }
+		  }
+		}
+	
+	
+	private class TemperatureSensorActivityClassificationTask extends AsyncTask<Void, Void, Void> {
+		@Override
+		protected Void doInBackground(Void... arg0) {
+			try {
+				System.out.println(mTempBuffer.take().doubleValue());
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			return null;
+			}
 	}
+	
 }
+
+
 
  // Utility TimerTask implementor class to periodically update the final time.
 // We can configure the interval , between each call to the run method to this class
@@ -736,7 +908,7 @@ class UpdateFinalTypeTask extends TimerTask {
 	// It could be changed once we process the activity map.
 	private int mCurrentType = 13;
 	
-	//Constructor to be called to intialize the class object.
+	//Constructor to be called to initialize the class object.
 	public UpdateFinalTypeTask(Map<Integer,Integer> finalInferredActivityTypeMap, Intent motionUpdateBroadcast, Context appContext) {
 		mFinalInferredActivityTypeMap = finalInferredActivityTypeMap;
 		mMotionUpdateBroadcast = motionUpdateBroadcast;
@@ -799,5 +971,7 @@ class UpdateFinalTypeTask extends TimerTask {
 			
 			// Send the broad cast. It updates the UI.
 			mAppContext.sendBroadcast(mMotionUpdateBroadcast);
-	   }
+	   }	   
 	}
+
+
