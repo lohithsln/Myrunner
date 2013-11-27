@@ -5,10 +5,12 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -17,6 +19,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import weka.core.Attribute;
 import weka.core.Instance;
@@ -80,12 +83,9 @@ public class TrackingService extends Service
 	private float[] mGeomagnetic;
 	private static ArrayBlockingQueue<Double> mAccBuffer;
 	private static ArrayBlockingQueue<LumenDataPoint> mLightIntensityReadingBuffer;
-	// Buffer for temperature readings
-	private static ArrayBlockingQueue<Double> mTempBuffer;
 	
 	private AccelerometerActivityClassificationTask mAccelerometerActivityClassificationTask;
 	private LightSensorActivityClassificationTask mLightSensorActivityClassificationTask;
-	private TemperatureSensorActivityClassificationTask mTempSensorActivityClassificationTask;
 	
 	private final IBinder mBinder = new TrackingBinder();
 
@@ -102,17 +102,11 @@ public class TrackingService extends Service
 	public static final String CURRENT_MOTION_TYPE = "new motion type";
 	public static final String VOTED_MOTION_TYPE = "voted motion type";
 	public static final String ACTION_TRACKING = "tracking action";
+	public static final String CURRENT_SWEAT_RATE_INTERVAL = "sweat rate Interval";
+	public static final String FINAL_SWEAT_RATE_AVERAGE = "average sweat rate";
 
 	private static final String TAG = "TrackingService";
 	
-	// Variables added by lohith.
-	private double totalAcceleration;
-
-	private double avgAcceleration;
-	private double timeDuration;
-	private double initialVelocity;
-	private String temperature;
-	private String humidity;
 	
 	private static Timer dataCollector;
   	private TimerTask dataCollectorTask = new TimerTask() {
@@ -137,22 +131,14 @@ public class TrackingService extends Service
 		mMotionUpdateBroadcast.setAction(ACTION_MOTION_UPDATE);
 		mLightIntensityReadingBuffer = new ArrayBlockingQueue<LumenDataPoint>(Globals.LIGHT_BUFFER_CAPACITY);
 		mAccBuffer = new ArrayBlockingQueue<Double>(Globals.ACCELEROMETER_BUFFER_CAPACITY);
-		mTempBuffer = new ArrayBlockingQueue<Double>(Globals.TEMPERATURE_BUFFER_CAPCITY);
 		mAccelerometerActivityClassificationTask = new AccelerometerActivityClassificationTask();
 		mLightSensorActivityClassificationTask = new LightSensorActivityClassificationTask();
-		mTempSensorActivityClassificationTask = new TemperatureSensorActivityClassificationTask();
 		mInferredActivityType = Globals.ACTIVITY_TYPE_STANDING;
 		
 		//Start the timer for data collection
 		dataCollector = new Timer();
 		dataCollector.scheduleAtFixedRate(dataCollectorTask, Globals.DATA_COLLECTOR_START_DELAY, Globals.DATA_COLLECTOR_INTERVAL);
 		
-		//Added by lohith
-		avgAcceleration = 0;
-		timeDuration = 5000;
-		initialVelocity = 0;
-		// the weather variables have to be intialized by the API call only. we cant set them to 0.
-		// Get the weather details - this should set the varial
 	}
 
 	@Override
@@ -203,8 +189,7 @@ public class TrackingService extends Service
 			
 			mTempSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_TEMPERATURE);
 			mSensorManager.registerListener(this, mTempSensor, SensorManager.SENSOR_DELAY_FASTEST);
-			
-			mTempSensorActivityClassificationTask.execute();
+
 	    }
 	    
 		// Using pending intent to bring back the MapActivity from notification center.
@@ -247,7 +232,6 @@ public class TrackingService extends Service
 	    
 	    // cancel task
 	    mAccelerometerActivityClassificationTask.cancel(true);
-	    mTempSensorActivityClassificationTask.cancel(true);
 	}
 	
 	public class TrackingBinder extends Binder{
@@ -305,14 +289,6 @@ public class TrackingService extends Service
 	public void onSensorChanged(SensorEvent event) {
 //		Toast.makeText(getApplicationContext(), "onSensorChanged", Toast.LENGTH_SHORT).show();
 		 // Many sensors return 3 values, one for each axis.
-		if(event.sensor.getType() == Sensor.TYPE_TEMPERATURE) {
-			// Get temperature readings.
-			float[] temperatureArr = event.values;
-			//  Check for ambient temperature and log the same.
-			double temp = temperatureArr[0];
-			mTempBuffer.add(temp);
-		}
-
 		if(trackFile == null) {
 			File sdCard = Environment.getExternalStorageDirectory();  
 			String resultPredictor = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/keepTrack.txt";     
@@ -389,12 +365,6 @@ public class TrackingService extends Service
 	              }
 	          }
 //			Toast.makeText(getApplicationContext(), String.valueOf(mAccBuffer.size()), Toast.LENGTH_SHORT).show();
-		} else if(event.sensor.getType() == Sensor.TYPE_TEMPERATURE) {
-			// Get temperature readings.
-			float[] temperatureArr = event.values;
-			//  Check for ambient temperature and log the same.
-			double temp = temperatureArr[0];
-			mTempBuffer.add(temp);
 		}
 	}
 
@@ -531,10 +501,12 @@ public class TrackingService extends Service
 	int inferenceCount=0;
 	Map<Integer,Integer> mInferredActivityTypeMap = new HashMap<Integer,Integer>(Globals.FEAT_NUMBER_FEATURES);
 	Map<Integer,Integer> mFinalInferredActivityTypeMap = new HashMap<Integer,Integer>();
+	Map<Integer,Double> mActivityVsDurationMap = new HashMap<Integer,Double>();
 	
 	private class AccelerometerActivityClassificationTask extends AsyncTask<Void, Void, Void> {
 		@Override
 		protected Void doInBackground(Void... arg0) {
+			
 			int blockSize = 0;
 			FFT fft = new FFT(Globals.ACCELEROMETER_BLOCK_CAPACITY);
 			double[] accBlock = new double[Globals.ACCELEROMETER_BLOCK_CAPACITY];
@@ -545,23 +517,39 @@ public class TrackingService extends Service
 			double currentLeadCount = Double.MIN_VALUE;
 			int currentTrend = Integer.MIN_VALUE;
 			FileOutputStream predictionFile = null;
-			FileOutputStream accelerometerValueFileStream = null;
-			FileOutputStream accelerometerMedianFileStream = null;
+			// Use in case you want to collect data for training
+			FileOutputStream trainingDataFileStream = null;
 			
-			double sumForMean = 0;
+			// last logged time for any activity
+			long lastNotedTime = 0;
+			// Time elapsed since last log
+			float timeElapsed;
+			// Correction parameter used while calculating time difference.
+			float timeCorrectionMillis;
+			//FileOutputStream accelerometerValueFileStream = null;
+			//FileOutputStream accelerometerMedianFileStream = null;
+			
+			// Delay between worker calls, the worker sets the final type and final sweat rate.
+			// milli seconds
+			final int delayBetweenWorkerCalls = 500;
+
 			
 			// Memory card path.
 			File sdCard = Environment.getExternalStorageDirectory();
 			// Application path.
     		String resultPredictor = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/predicted.txt";    
-    		String accelerometerValueLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/allValues.txt";
-    		String accelerometerMedianLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/medianValues.txt";
+    		// To do: code clean up
+    		// new code
+    		//String accelerometerValueLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/allValues.txt";
+    		//String accelerometerMedianLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/medianValues.txt";
+    		//String trainingDataLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/t.txt";
     		
-    		SortedSet accelerometerReadings = new TreeSet();
-    		Double[] accelerometerReadingArray;
+    		// SortedSet accelerometerReadings = new TreeSet();
+    		// Double[] accelerometerReadingArray;
     		File resultFile;
-    		File accelerometerLogFile;
-    		File accelerometerMedianFile;
+    		// File accelerometerLogFile;
+    		// File accelerometerMedianFile;
+    		// File trainingDataFile;
 			try {
 				resultFile = new File(resultPredictor);
 				resultFile.createNewFile();
@@ -569,13 +557,23 @@ public class TrackingService extends Service
 				 predictionFile.write("starting write".getBytes());
                  predictionFile.flush();
                  
-                 accelerometerLogFile = new File(accelerometerValueLogger);
-                 accelerometerLogFile.createNewFile();
-                 accelerometerValueFileStream = new FileOutputStream(accelerometerLogFile);
+                  // new code
+                 // File used in case you need to log training data
+                 //trainingDataFile = new File(trainingDataLogger);
+                 // trainingDataFile.createNewFile();
+                 // trainingDataFileStream = new FileOutputStream(trainingDataFile);
+                 // trainingDataFileStream.write("starting training data activity \n".getBytes());
+                 // trainingDataFileStream.flush();
+                  
                  
-                 accelerometerMedianFile = new File(accelerometerMedianLogger);
-                 accelerometerMedianFile.createNewFile();
-                 accelerometerMedianFileStream = new FileOutputStream(accelerometerMedianFile);
+                 // File used in case you need to log values to analyze accelerometer values.
+                 
+                 //accelerometerLogFile = new File(accelerometerValueLogger);
+                 //accelerometerLogFile.createNewFile();
+                 //accelerometerValueFileStream = new FileOutputStream(accelerometerLogFile);                 
+                 //accelerometerMedianFile = new File(accelerometerMedianLogger);
+                 //accelerometerMedianFile.createNewFile();
+                 //accelerometerMedianFileStream = new FileOutputStream(accelerometerMedianFile);
                  
                   
 			} catch (Exception e) {
@@ -584,8 +582,17 @@ public class TrackingService extends Service
 			
 			// Create the timer task implementor class object with an intial state.
 			// The various state values are required so that the timer task impelmentor can judiciously determine the dominant activity as per the latest trend.
-			UpdateFinalTypeTask updateTask = new UpdateFinalTypeTask(mFinalInferredActivityTypeMap, mMotionUpdateBroadcast, getApplicationContext());
-			updateFinalTypeTimer.schedule(updateTask,0,2000);
+			UpdateFinalTypeTask updateTask = new UpdateFinalTypeTask(
+					mFinalInferredActivityTypeMap,
+					mActivityVsDurationMap,
+					mMotionUpdateBroadcast,
+					getApplicationContext(),delayBetweenWorkerCalls
+			);
+			updateFinalTypeTimer.schedule(updateTask,0,delayBetweenWorkerCalls);
+
+			// Note the time before first activity.
+			lastNotedTime = System.currentTimeMillis();
+			
 			while (true) {
 				
 				try {
@@ -609,12 +616,7 @@ public class TrackingService extends Service
 					ArrayList<Double> featVect = new ArrayList<Double>(Globals.ACCELEROMETER_BLOCK_CAPACITY + 1);
 					
 					// Dumping buffer
-					double accelValue = mAccBuffer.take().doubleValue();
-					//String temp = String.valueOf(accelValue);
-					//String temp2 = temp.substring(0,6);
-					//accelerometerValueFile.write((temp2 + ",").getBytes());
-					//accelerometerValueFile.flush();
-					
+					double accelValue = mAccBuffer.take().doubleValue();		
 					accBlock[blockSize++] = accelValue;
 					
 					// JERRID: Pops the "head" element from the Blocking Queue one at a time
@@ -625,6 +627,19 @@ public class TrackingService extends Service
 					if (blockSize == Globals.ACCELEROMETER_BLOCK_CAPACITY) {
 						//Recieved a full block/disable data collection						
 						pauseDataCollection();
+						
+						// Calculate time difference to calculate the activity duration.
+						long currentTime = System.currentTimeMillis();
+						
+						// This gives the seconds difference
+						timeElapsed = TimeUnit.MILLISECONDS.toSeconds(currentTime - lastNotedTime) - 
+							    TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(currentTime - lastNotedTime));
+						
+						// Can either be positive or negative - used to correct the seconds difference.
+						timeCorrectionMillis = ((currentTime%1000) - (lastNotedTime%1000));
+						timeElapsed = timeElapsed + timeCorrectionMillis/1000;						
+						lastNotedTime = currentTime;
+						
 						
 						blockSize = 0;
 						
@@ -640,13 +655,15 @@ public class TrackingService extends Service
 						fft.fft(re, im);
 						for (int i = 0; i < re.length; i++) {
 							double mag = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
-							accelerometerReadings.add(mag);
-							String temp = String.valueOf(mag);
-							String temp2 = temp.substring(0,6);
-							accelerometerValueFileStream.write((temp2 + ",").getBytes());
-							accelerometerValueFileStream.flush();
 							
-							accelerometerReadingArray =
+							// New code, used for testing.
+							//accelerometerReadings.add(mag);
+							///String temp = String.valueOf(mag);
+							//String temp2 = temp.substring(0,6);
+							//accelerometerValueFileStream.write((temp2 + ",").getBytes());
+							//accelerometerValueFileStream.flush();
+							
+							/*accelerometerReadingArray =
 									Arrays.copyOf(
 											accelerometerReadings.toArray(),
 											accelerometerReadings.toArray().length, 
@@ -663,6 +680,7 @@ public class TrackingService extends Service
 							
 							accelerometerMedianFileStream.write(("\n Current count is:" + (accelerometerReadingArray.length)).getBytes());
 							accelerometerMedianFileStream.flush();
+							*/
 							featVect.add(mag);
 							im[i] = .0; // Clear the field
 						}
@@ -670,6 +688,22 @@ public class TrackingService extends Service
 						// Append max after frequency component
 						featVect.add(max);						
 						int value = (int) WekaClassifier.classify(featVect.toArray());
+						
+						// new code, used to track the activity duration.
+						//Just note the activity and the time that has elapsed;
+						Double currentDuration = mActivityVsDurationMap.containsKey(value) ? mActivityVsDurationMap.get(value):0;
+						mActivityVsDurationMap.put(value,currentDuration+timeElapsed);
+						updateTask.SetActivityDurationMap(mActivityVsDurationMap);
+						StringBuilder featureVectorString = new StringBuilder();
+						// For classification purpose
+						for(double featureVectorValue:featVect) {
+							featureVectorString.append(String.valueOf(featureVectorValue).substring(0,8));
+							featureVectorString.append(",");
+						}
+						// Training data.
+						featureVectorString.append("StandingWalking\n");
+						// trainingDataFileStream.write(featureVectorString.toString().getBytes());
+		                // trainingDataFileStream.flush();
 						Log.d("mag", String.valueOf(value));
 						
 
@@ -709,6 +743,18 @@ public class TrackingService extends Service
 
 	                	//int maxInferenceKey=-1,maxInferenceValue=-1;
 	                	
+						StringBuilder currentActivityBuilder2 = new StringBuilder();
+                		
+                		
+	                	
+                		currentActivityBuilder2.append("\n\nThe recorded duration activities so far:\n");
+                		for (Map.Entry<Integer, Double> entry : mActivityVsDurationMap.entrySet()) {
+                			// List each activity along with count.
+                			currentActivityBuilder2.append(Globals.INFERENCE_LIST[entry.getKey()] + " totally occured " + entry.getValue() + "  amount of duration. \n");
+                		}
+                        predictionFile.write(currentActivityBuilder2.toString().getBytes());
+                        predictionFile.flush();
+                        
 	                	// Finished collection the 5 samples
 	                	// Now increase the weight of an activity based on the current dominant trend.
 		                if(inferenceCount == mMaxActivityInferenceWindow)  {
@@ -726,14 +772,21 @@ public class TrackingService extends Service
 		                		}
 		                        predictionFile.write(currentActivityBuilder.toString().getBytes());
 		                        predictionFile.flush();
+		                        
+		                        
+		                        
 		                    }
-		                    catch (IOException e) {
-		                    	predictionFile.close();
+		                    catch (Exception e) {
+		                    	//predictionFile.close();
 		                        Log.e("Exception", "File write failed: " + e.toString());
 		                    }
 		                	
 		                	// Reset the entire map
 		                	mInferredActivityTypeMap.clear();
+		                	// For this activity get the current count in the mapping
+							// If the first time put it into a map with a count of 1.
+							 int finalTypeCount = mFinalInferredActivityTypeMap.containsKey(mInferredActivityType)?mInferredActivityTypeMap.get(mInferredActivityType):0;
+							 mFinalInferredActivityTypeMap.put(mInferredActivityType, finalTypeCount + 1);
 		                	// New code.
 		                	// After clearing the entire map increased the weight for the current dominant trend.
 		                	// Unless some other activity dominates this activity in the next cycle, this would continue to be the dominant trend.
@@ -783,19 +836,20 @@ public class TrackingService extends Service
 						//if (mInferenceCount[maxIndex] < mInferenceCount[2]) maxIndex = 2;their original code
 		                
 		                // Here specify the current trend.
+		                // new code
 						mInferredActivityType = Globals.INFERENCE_MAPPING[currentTrend == -1 ? value : currentTrend];//maxIndex];
 						int currentActivity = Globals.INFERENCE_MAPPING[value];
 						mMotionUpdateBroadcast.putExtra(CURRENT_MOTION_TYPE, currentActivity);
+						int sweatRateIndex = GetSweatRateIndexForActivity(currentActivity);
+						mMotionUpdateBroadcast.putExtra(CURRENT_SWEAT_RATE_INTERVAL,sweatRateIndex);
 						updateTask.SetCurrentType(currentActivity);
+						updateTask.SetSweatRateIndex(sweatRateIndex);
 
 						//mMotionUpdateBroadcast.putExtra(CURRENT_MOTION_TYPE, currentActivity);
 						// send broadcast with the CURRENT activity type
 						//---------------
 						
-						// For this activity get the current count in the mapping
-						// If the first time put it into a map with a cound of 1.
-						 int finalTypeCount = mFinalInferredActivityTypeMap.containsKey(mInferredActivityType)?mInferredActivityTypeMap.get(mInferredActivityType):0;
-						 mFinalInferredActivityTypeMap.put(mInferredActivityType, finalTypeCount + 1);
+						
 						 
 						 // Updates the timer task class with the latest status
 						 // This is required for the timer task implementor class to judicious determine the dominant activity as per the latest trend.
@@ -815,79 +869,32 @@ public class TrackingService extends Service
 			}
 		}
 		
-		// New code - added by lohith 
-		// Calculates final velocity based upong avg accleration and initial velocity.
-		// To be called periodically.
-		private double CalculateFinalVelocity() {
-			avgAcceleration = 0;
-			timeDuration = 5000;
-			initialVelocity = 0;
+		
+		// Gets the sweat rate index for the activity.
+		private int GetSweatRateIndexForActivity(int currentActivityIndex) {
+			int sweatRateIndex = 0;
 			
-			double currentVelocity = initialVelocity + (avgAcceleration * timeDuration);
-			return currentVelocity;
+			switch(currentActivityIndex) {
+			case Globals.ACTIVITY_TYPE_STANDING:
+			case Globals.ACTIVITY_TYPE_WALKING:
+				sweatRateIndex = 0;
+				break;
+			case Globals.ACTIVITY_TYPE_JOGGING :
+				sweatRateIndex = 1;
+				break;
+			case Globals.ACTIVITY_TYPE_RUNNING:
+				sweatRateIndex = 2;
+				break;
+				default:
+					sweatRateIndex = 3;
+					break;
+			}
+		
+		return sweatRateIndex;
 		}
 		
-		// Added by lohith
-		// Periodically queries the yahoo API to get the weather details.
-		// to be called once per minute
-		// Get the temperature and humidity.
-		private void getWeatherDetails() {
-			@SuppressWarnings("deprecation")
-			DefaultHttpClient httpclient = new DefaultHttpClient();
-		    try {
-		      // specify the host, protocol, and port
-		      HttpHost target = new HttpHost("weather.yahooapis.com", 80, "http");
-
-		      // specify the get request
-		      HttpGet getRequest = new HttpGet("/forecastrss?p=80020&u=c");
-
-		      //System.out.println("executing request to " + target);
-
-		      HttpResponse httpResponse = httpclient.execute(target, getRequest);
-		      HttpEntity entity = httpResponse.getEntity();
-
-		      Header[] headers = httpResponse.getAllHeaders();
-		   
-		      if (entity != null) {
-		        //System.out.println(EntityUtils.toString(entity));
-		    	  String obtainedData = EntityUtils.toString(entity);
-		    	  
-		    	  // Get temperature
-		    	  int tempIndex = obtainedData.indexOf("temp=");
-		    	  temperature = obtainedData.substring(tempIndex+6, tempIndex+8);
-		    	  
-		    	  // Get humidity
-		    	  int humidityIndex = obtainedData.indexOf("humidity=");
-		    	  humidity = obtainedData.substring(humidityIndex+10, humidityIndex+12);
-		    	  
-		      }
-
-		    } catch (Exception e) {
-		      e.printStackTrace();
-		    } finally {
-		      // When HttpClient instance is no longer needed,
-		      // shut down the connection manager to ensure
-		      // immediate deallocation of all system resources
-		      httpclient.getConnectionManager().shutdown();
-		    }
-		  }
-		}
-	
-	
-	private class TemperatureSensorActivityClassificationTask extends AsyncTask<Void, Void, Void> {
-		@Override
-		protected Void doInBackground(Void... arg0) {
-			try {
-				System.out.println(mTempBuffer.take().doubleValue());
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-			return null;
-			}
 	}
-	
-}
+	}
 
 
 
@@ -898,21 +905,58 @@ class UpdateFinalTypeTask extends TimerTask {
 	// Activities vs their respective count.
 	Map<Integer,Integer> mFinalInferredActivityTypeMap;
 	
+	// Track activity vs their duration.
+	Map<Integer,Double> mActivityVsDurationMap;
+	
 	//Intent of the calling module
 	Intent mMotionUpdateBroadcast;
 	
 	//Context of the calling module
 	Context mAppContext;
 	
-	//Initially set the current type to standing
+	// Initially set the current type to standing
 	// It could be changed once we process the activity map.
 	private int mCurrentType = 13;
 	
-	//Constructor to be called to initialize the class object.
-	public UpdateFinalTypeTask(Map<Integer,Integer> finalInferredActivityTypeMap, Intent motionUpdateBroadcast, Context appContext) {
+	// Used to predict the current sweat rate.
+	private int mSweatRateIndex = 0;
+	
+	// Average sweat rate while standing and walking is 1.5 liter per hour
+	private int standWalkingHourlySweatRate = 1500;
+	
+	// Average sweat rate while standing and walking is 2 liters per hour
+	private int joggingHourlySweatRate = 2000;
+	
+	// Average sweat rate while running is 3 liters per hour
+	private int runningHourlySweatRate = 3000;
+		
+	// Maximum number of calls that can be done in a minute.
+	private int mNoOfMaxCalls;
+	
+	// Constructor to be called to initialize the class object.
+	public UpdateFinalTypeTask(
+			Map<Integer,Integer> finalInferredActivityTypeMap, 
+			Map<Integer,Double> activityVsDurationMap,
+			Intent motionUpdateBroadcast, 
+			Context appContext,
+			int delayinMillisBetweenWorkerCalls
+	) {
 		mFinalInferredActivityTypeMap = finalInferredActivityTypeMap;
+		mActivityVsDurationMap = activityVsDurationMap;
 		mMotionUpdateBroadcast = motionUpdateBroadcast;
 		mAppContext = appContext;
+		// Calculate the number of calls to be called in a minute
+		mNoOfMaxCalls = 60000/(delayinMillisBetweenWorkerCalls);
+		if(mNoOfMaxCalls < 1) {
+			mNoOfMaxCalls = 1;
+		}
+	}
+	
+	// Sets the activity vs duration map.
+	// map used by the worker to choose and set the final sweat rate.
+	// Set api is required as the duration of each activity would change over a course of time.
+	public void SetActivityDurationMap(Map<Integer,Double> activityVsDurationMap) {
+		mActivityVsDurationMap = activityVsDurationMap;
 	}
 	
 	// Sets the activity vs count map.
@@ -939,19 +983,44 @@ class UpdateFinalTypeTask extends TimerTask {
 	public void SetCurrentType(int currentType) {
 		mCurrentType = currentType;
 	}
+	
+	
+	// set the current sweat rate index.
+	public void SetSweatRateIndex(int sweatRateIndex) {
+		mSweatRateIndex = sweatRateIndex;
+	}
 
 	// Constant element required to update the final type.
 	public static final String VOTED_MOTION_TYPE = "voted motion type";
 	
+	// Constant element to calculate the average sweat rate.
+	public static final String FINAL_SWEAT_RATE_AVERAGE = "average sweat rate";
+	
 	// Constant element required to update the current type.
 	public static final String CURRENT_MOTION_TYPE = "new motion type";
 	
+	// Constant element required to update the sweat rate interval prediction.
+	public static final String CURRENT_SWEAT_RATE_INTERVAL = "sweat rate Interval";
+	
+	// Keeps track of the number of times this worker has been executed
+
+	// Say the delay between calls is set to x seconds.
+	// To make sure the worker run only the first minute, set the maximum 
+	// no of calls to (60 seconds / delay in seconds)
+	// For ex if delay is set to 2 seconds, maximum no of calls = 60/2 = 30.
+	private int mCallCount = 0;
+	
 	// worker method
 	   public void run() {
+		   mCallCount++;
+		   // check the call count, to make sure only it is being called in the first minute.
+		   if(mCallCount > mNoOfMaxCalls) {
+			   return;
+		   }
 			// Temp element used in getting the maximum value.
 			int maxElement = Integer.MIN_VALUE;
 			// By default standing. Would be updated as and when we poll the activity map.
-			int finalInferredType = 13;
+			int finalInferredType = Globals.ACTIVITY_TYPE_STANDING;
 			
 			// Take into consideration all the activities which has been tabulated so far.
 			// check which activity has run the maximum number of times.
@@ -966,12 +1035,50 @@ class UpdateFinalTypeTask extends TimerTask {
 			}
 			// Set the current type.
 			mMotionUpdateBroadcast.putExtra(CURRENT_MOTION_TYPE, mCurrentType);
+			// set the current sweat rate.
+			mMotionUpdateBroadcast.putExtra(CURRENT_SWEAT_RATE_INTERVAL, mSweatRateIndex);
 			// Set the final type.
 			mMotionUpdateBroadcast.putExtra(VOTED_MOTION_TYPE, finalInferredType);
+			Double sweatRateMeasure = 0.0;
+			Double activityDuration = 0.0;
+			if(finalInferredType == Globals.ACTIVITY_TYPE_STANDING) {
+				// Get the activity duration in seconds. 				
+				activityDuration = mActivityVsDurationMap.get(0);
+				
+				// Calculate the total amount of sweat lost.
+				if(activityDuration != null ){
+					sweatRateMeasure = (standWalkingHourlySweatRate * activityDuration)/3600;
+				}				
+			} else if(finalInferredType == Globals.ACTIVITY_TYPE_WALKING) {
+				// Get the activity duration in seconds. 
+				activityDuration = mActivityVsDurationMap.get(1);
+				if(activityDuration != null ){
+					sweatRateMeasure = (standWalkingHourlySweatRate * activityDuration)/3600;
+				}
+			}
+			else if(finalInferredType == Globals.ACTIVITY_TYPE_JOGGING) {
+				// Get the activity duration in seconds. 
+				activityDuration = mActivityVsDurationMap.get(2);
+				// Calculate the total amount of sweat lost.
+				if(activityDuration != null ){
+					sweatRateMeasure = (joggingHourlySweatRate * activityDuration)/3600;
+				}
+			} else if(finalInferredType == Globals.ACTIVITY_TYPE_RUNNING) {
+				// Get the activity duration in seconds. 
+				activityDuration = mActivityVsDurationMap.get(3);
+				// Calculate the total amount of sweat lost.
+				if(activityDuration != null ){
+					sweatRateMeasure = (runningHourlySweatRate * activityDuration)/3600;
+				}
+			}
+			
+			// set the final sweat rate.
+			mMotionUpdateBroadcast.putExtra(FINAL_SWEAT_RATE_AVERAGE,sweatRateMeasure + " milli liters");
 			
 			// Send the broad cast. It updates the UI.
 			mAppContext.sendBroadcast(mMotionUpdateBroadcast);
 	   }	   
-	}
+	
+}
 
 

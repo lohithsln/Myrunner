@@ -13,6 +13,8 @@ import android.content.ServiceConnection;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.util.Log;
@@ -60,6 +62,7 @@ public class MapDisplayActivity extends Activity {
 	PolylineOptions rectOptions;
 	Polyline polyline;
 
+	 
 	public ArrayList<Location> mLocationList;
 	private ArrayList<LatLng> mLatLngList;
 	
@@ -69,6 +72,7 @@ public class MapDisplayActivity extends Activity {
 	private int mTaskType;
 	private int mInputType;
 	private int mInferredActivityType;
+	private String mSweatRate;
 	
 	public static final int MENU_ID_DELETE = 0;
 	
@@ -84,6 +88,7 @@ public class MapDisplayActivity extends Activity {
     private double mDuration;
     
     public LatLng firstLatLng;
+
 
 	private ServiceConnection mConnection = new ServiceConnection() {
 		@Override
@@ -128,11 +133,14 @@ public class MapDisplayActivity extends Activity {
 		mTaskType = intent.getIntExtra(MainActivity.TASK_TYPE, -1);
 		mInputType = intent.getIntExtra(MainActivity.INPUT_TYPE, -1);
 		mInferredActivityType = intent.getIntExtra(MainActivity.ACTIVITY_TYPE, -1);
+		//Lohith
+		//mSweatRate = intent.getIntExtra(MainActivity.SWEAT_RATE,-1);
 		// mark: row id ?
 		
 		mDistance = 0;
 		mCalories = 0;
 		mAvgSpeed = 0;
+		mSweatRate = "";
 		mStartTime = 0;
 		mClimb = 0;
 		mDuration = 0;
@@ -140,6 +148,7 @@ public class MapDisplayActivity extends Activity {
 		// init mEntry
 		mEntry = new ExerciseEntry();
 		mEntry.setActivityType(mInferredActivityType);
+		mEntry.setSweatRate(mSweatRate);
 		mEntry.setInputType(mInputType);
 		
 		FragmentManager myFragmentManager = getFragmentManager();
@@ -243,17 +252,22 @@ public class MapDisplayActivity extends Activity {
 	
 	@Override
 	public void onPause(){
+		
+		
+		
 		if (mTaskType == Globals.TASK_TYPE_NEW){
 			unregisterReceiver(receiver);
 			if (mInputType == Globals.INPUT_TYPE_AUTOMATIC)
 				unregisterReceiver(mMotionUpdateReceiver);
 		}
 		super.onPause();
+	
 	}
 	
 	@Override
 	public void onResume(){
 		super.onResume();
+		
 		if (mTaskType == Globals.TASK_TYPE_NEW){
 			IntentFilter intentFilter = new IntentFilter();
 			intentFilter.addAction(TrackingService.ACTION_TRACKING);
@@ -283,6 +297,7 @@ public class MapDisplayActivity extends Activity {
 		mEntry.setLocationList(mLocationList);
 		mEntry.setDuration((int)mDuration);
 		mEntry.setActivityType(mInferredActivityType);
+		mEntry.setSweatRate(mSweatRate);
 		
 		mEntryHelper = new ExerciseEntryHelper(mEntry);
 		id = mEntryHelper.insertToDB(this);		
@@ -455,9 +470,12 @@ public class MapDisplayActivity extends Activity {
 		@Override
 		public void onReceive(Context context, Intent intent){
 			mInferredActivityType = intent.getIntExtra(TrackingService.VOTED_MOTION_TYPE, -1);
+			mSweatRate = intent.getStringExtra(TrackingService.FINAL_SWEAT_RATE_AVERAGE);
 			int currentActivity = intent.getIntExtra(TrackingService.CURRENT_MOTION_TYPE, -1);
+			int sweatRateIndex = intent.getIntExtra(TrackingService.CURRENT_SWEAT_RATE_INTERVAL, -1);
 			String type = Globals.TYPE_STATS + Globals.ACTIVITY_TYPES[currentActivity];
-			typeStats.setText(type);
+			String sweatRate = Globals.SWEAT_STATS + Globals.SWEAT_RATE_INTERVALS[sweatRateIndex];
+			typeStats.setText(type + "\n" + sweatRate);
 		}
 	}
 		private boolean isMapNeedRecenter(LatLng latlng) {
@@ -485,5 +503,3 @@ public class MapDisplayActivity extends Activity {
 				(int) latlng.latitude);	
 		}
 }
-
-

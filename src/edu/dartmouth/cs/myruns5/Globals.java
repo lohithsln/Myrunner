@@ -15,7 +15,6 @@ public abstract class Globals {
 	// Motion sensor buffering related consts 
 	public static final int ACCELEROMETER_BUFFER_CAPACITY = 2048;
 	public static final int ACCELEROMETER_BLOCK_CAPACITY = 64;
-	public static final int TEMPERATURE_BUFFER_CAPCITY = 64;
 	
 	//data collection parameters
 	public static final long DATA_COLLECTOR_START_DELAY = 2 * Globals.ONE_SECOND;
@@ -29,6 +28,7 @@ public abstract class Globals {
 	public static final String KEY_DATE_TIME = "date_time";
 	public static final String KEY_DURATION = "duration";
 	public static final String KEY_DISTANCE = "distance";
+	public static final String KEY_SWEATRATE = "sweatrate";
 	public static final String KEY_UV_EXPOSURE = "cumulative_uv_exposure";
 	public static final String KEY_VITAMIN_D = "cumulative_vitamin_d";
 	public static final String KEY_AVG_PACE = "avg_pace";
@@ -103,6 +103,8 @@ public abstract class Globals {
 		"Downhill Skiing", "Cross-Country Skiing", "Snowboarding", "Skating", "Swimming", 
 		"Mountain Biking", "Wheelchair", "Elliptical", "Other",  "Standing" , "Jogging" , "Unknown"};
 	
+	public static final String[] SWEAT_RATE_INTERVALS = { "Low(1-1.5 Liter/hour)","Medium(1.5-2 Liter/hour)", "High(2 - 3 Liter/hour)"};
+	
 	// Int encoded activity types
 	public static final int ACTIVITY_TYPE_ERROR = -1;
 	public static final int ACTIVITY_TYPE_RUNNING = 0;
@@ -142,6 +144,7 @@ public abstract class Globals {
 	public static final String CLIMB_STATS = "Climb: ";
 	public static final String CALORIES_STATS = "Calories: ";
 	public static final String DISTANCE_STATS = "Diatance: ";
+	public static final String SWEAT_STATS = "Sweat Rate:";
 	
 	public static final int[] INFERENCE_MAPPING = {ACTIVITY_TYPE_STANDING, ACTIVITY_TYPE_WALKING, ACTIVITY_TYPE_JOGGING, ACTIVITY_TYPE_RUNNING};
 	public static final String[] INFERENCE_LIST = {"Standing", "Walking" , "Jogging" , "Sprinting" ,"Other"};

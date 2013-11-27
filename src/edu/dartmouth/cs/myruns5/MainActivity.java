@@ -17,6 +17,7 @@ public class MainActivity extends Activity {
 	public static final String ACTIVITY_TYPE = "activity type";
 	public static final String INPUT_TYPE = "input type";
 	public static final String TASK_TYPE = "task type";
+	public static final String SWEAT_RATE = "sweat rate";
 	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {

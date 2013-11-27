@@ -183,6 +183,7 @@ public class HistoryProvider extends ContentProvider {
 									HistoryTable.KEY_COMMENT,
 									HistoryTable.KEY_DATE_TIME,
 									HistoryTable.KEY_DISTANCE,
+									HistoryTable.KEY_SWEATRATE,
 									HistoryTable.KEY_DURATION,
 									HistoryTable.KEY_GPS_DATA,
 									HistoryTable.KEY_HEARTRATE,

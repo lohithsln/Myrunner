@@ -15,6 +15,7 @@ public class ExerciseEntry {
 	private Date dateTime;
 	private int duration;
 	private double distance;
+	private String sweatrate;
 	private double avgPace; 
 	private double avgSpeed;
 	private int calorie;
@@ -35,6 +36,7 @@ public class ExerciseEntry {
 		this.dateTime = new Date(System.currentTimeMillis());
 		this.duration = 0;
 		this.distance = 0;
+		this.sweatrate = "";
 		this.avgPace = 0;
 		this.avgSpeed = 0;
 		this.calorie = 0;
@@ -117,6 +119,14 @@ public class ExerciseEntry {
 
 	public void setDistance(double distance) {
 		this.distance = distance;
+	}
+	
+	public String getSweatRate() {
+		return sweatrate;
+	}
+	
+	public void setSweatRate(String sweatRate) {
+		this.sweatrate = sweatRate;
 	}
 
 	public double getAvgPace() {

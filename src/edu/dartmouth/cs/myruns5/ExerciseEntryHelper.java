@@ -52,6 +52,7 @@ public class ExerciseEntryHelper {
 		values.put(HistoryTable.KEY_COMMENT, mData.getComment());
 		values.put(HistoryTable.KEY_DATE_TIME, mData.getDateTime().toString());
 		values.put(HistoryTable.KEY_DISTANCE, mData.getDistance());
+		values.put(HistoryTable.KEY_SWEATRATE,mData.getSweatRate());
 		values.put(HistoryTable.KEY_DURATION, mData.getDuration());
 		values.put(HistoryTable.KEY_HEARTRATE, mData.getHeartrate());
 		values.put(HistoryTable.KEY_INPUT_TYPE, mData.getInputType());
@@ -101,6 +102,9 @@ public class ExerciseEntryHelper {
 		return mData.getDistance();
 	}
 
+	public String getSweatRate() {
+		return mData.getSweatRate();
+	}
 	public int getCalories() {
 		return mData.getCalorie();
 	}
@@ -155,6 +159,10 @@ public class ExerciseEntryHelper {
 	public void setDistance(int distanceInMeters) {
 		mData.setDistance(distanceInMeters);
 	}
+	
+	public void setSweatRate(String sweatRate) {
+		mData.setSweatRate(sweatRate);
+	}
 
 	public void setCalories(int calories) {
 		mData.setCalorie(calories);
@@ -180,9 +188,9 @@ public class ExerciseEntryHelper {
 		mData.setClimb(climb);
 	}
 
-	public void setAvgSpeed(double speed) {
-		mData.setAvgSpeed(speed);
-	}
+	//public void setAvgSpeed(double speed) {
+	//	mData.setAvgSpeed(speed);
+	//}
 
 	public void setID(long id) {
 		mData.setId(Long.valueOf(id));

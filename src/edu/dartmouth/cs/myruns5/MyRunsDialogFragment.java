@@ -32,6 +32,7 @@ public class MyRunsDialogFragment extends DialogFragment {
 		public static final int ID_PHOTO_PICKER_FROM_CAMERA = 0;
 		public static final int ID_PHOTO_PICKER_FROM_GALLERY = 1;
 
+		public static final int DIALOG_ID_SWEATRATE = 110;
 		private static final String DIALOG_ID_KEY = "dialog id";
 		
 		public EditText textEntryView;

@@ -13,6 +13,7 @@ public class ManualInputActivity extends ListActivity {
 	public static final int LIST_ITEM_ID_TIME = 1;
 	public static final int LIST_ITEM_ID_DURATION = 2;
 	public static final int LIST_ITEM_ID_DISTANCE = 3;
+	public static final int LIST_ITEM_ID_SWEATRATE = 7;
 	public static final int LIST_ITEM_ID_CALORIES = 4;
 	public static final int LIST_ITEM_ID_HEARTRATE = 5;
 	public static final int LIST_ITEM_ID_COMMENT = 6;
@@ -78,6 +79,8 @@ public class ManualInputActivity extends ListActivity {
 		case LIST_ITEM_ID_DISTANCE:
 			dialogId = MyRunsDialogFragment.DIALOG_ID_DISTANCE;
 			break;
+		case LIST_ITEM_ID_SWEATRATE:
+			dialogId = MyRunsDialogFragment.DIALOG_ID_SWEATRATE;
 		case LIST_ITEM_ID_CALORIES:
 			dialogId = MyRunsDialogFragment.DIALOG_ID_CALORIES;
 			break;

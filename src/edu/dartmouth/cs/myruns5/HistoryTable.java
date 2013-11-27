@@ -16,6 +16,7 @@ public class HistoryTable{
 			public static final String KEY_DATE_TIME = Globals.KEY_DATE_TIME;
 			public static final String KEY_DURATION = Globals.KEY_DURATION;
 			public static final String KEY_DISTANCE = Globals.KEY_DISTANCE;
+			public static final String KEY_SWEATRATE = Globals.KEY_SWEATRATE;
 			public static final String KEY_AVG_PACE = Globals.KEY_AVG_PACE;
 			public static final String KEY_AVG_SPEED = Globals.KEY_AVG_SPEED;
 			public static final String KEY_CALORIES = Globals.KEY_CALORIES;
@@ -39,6 +40,7 @@ public class HistoryTable{
 					+ KEY_DATE_TIME + " DATETIME NOT NULL, "
 					+ KEY_DURATION + " INTEGER NOT NULL, "
 					+ KEY_DISTANCE + " FLOAT, "
+					+ KEY_SWEATRATE + " FLOAT, "
 					+ KEY_AVG_PACE + " FLOAT, "
 					+ KEY_AVG_SPEED + " FLOAT,"
 					+ KEY_CALORIES + " INTEGER, "

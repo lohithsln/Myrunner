@@ -27,6 +27,7 @@ public class DisplayEntryActivity extends Activity {
 	EditText text6;
 	EditText text7;
 	
+	
 	private Context mContext;
 
 	//skeleton
@@ -48,7 +49,7 @@ public class DisplayEntryActivity extends Activity {
 		text5 = (EditText) findViewById(R.id.edit_display_calorie);
 		text6 = (EditText) findViewById(R.id.edit_display_heart_rate);
 	 	text7 = (EditText) findViewById(R.id.edit_display_comment);
-		
+
 		Intent intent = getIntent();
 		Log.d(null, "DisplayEntry: 1");
 
@@ -57,6 +58,7 @@ public class DisplayEntryActivity extends Activity {
 		String date_time = intent.getStringExtra(HistoryFragment.DATE_TIME);
 		String duration = intent.getStringExtra(HistoryFragment.DURATION);
 		String distance = intent.getStringExtra(HistoryFragment.DISTANCE);
+		String sweatrate = intent.getStringExtra(HistoryFragment.SWEATRATE);
 		String calorie = intent.getStringExtra(HistoryFragment.CALORIE);
 		String heartrate = intent.getStringExtra(HistoryFragment.HEARTRATE);
 		String comment = intent.getStringExtra(HistoryFragment.COMMENT);
@@ -69,6 +71,7 @@ public class DisplayEntryActivity extends Activity {
 		text5.setText(calorie);
 		text6.setText(heartrate);
 		text7.setText(comment);
+
 	}
 
 	
