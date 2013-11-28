@@ -298,7 +298,7 @@ public class HistoryFragment extends ListFragment
 		        
 		        typeIndex = cursor.getColumnIndex(Globals.KEY_SWEATRATE);
 		        line2 = line2 + cursor.getString(typeIndex);	       
-		        line2 = line2 + " Sweat rate";
+		        line2 = line2 + " sweat lost";
 		        
 		        TextView text2 = (TextView) view.findViewById(android.R.id.text2);
 		        

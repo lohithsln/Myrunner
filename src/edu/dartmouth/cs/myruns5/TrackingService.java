@@ -78,7 +78,6 @@ public class TrackingService extends Service
 	private SensorManager mSensorManager;
 	private Sensor mAccelerometer;
 	private Sensor mLightSensor;
-	private Sensor mTempSensor;
 	
 	private float[] mGeomagnetic;
 	private static ArrayBlockingQueue<Double> mAccBuffer;
@@ -186,11 +185,7 @@ public class TrackingService extends Service
 	    	//JERRID: Register light Sensor
 			mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
 			mSensorManager.registerListener(this, mLightSensor,SensorManager.SENSOR_DELAY_FASTEST);
-			
-			mTempSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_TEMPERATURE);
-			mSensorManager.registerListener(this, mTempSensor, SensorManager.SENSOR_DELAY_FASTEST);
-
-	    }
+			}
 	    
 		// Using pending intent to bring back the MapActivity from notification center.
 		// Use NotificationManager to build notification(icon, content, title, flag and pIntent)
@@ -506,7 +501,11 @@ public class TrackingService extends Service
 	private class AccelerometerActivityClassificationTask extends AsyncTask<Void, Void, Void> {
 		@Override
 		protected Void doInBackground(Void... arg0) {
-			
+
+			// First time , the buffer gets filled. For the first entry, the current time.
+			long bufferFillStartTime = System.currentTimeMillis();
+			// Used to calculate time difference between activities.
+			long bufferFillFinishTime = 0;
 			int blockSize = 0;
 			FFT fft = new FFT(Globals.ACCELEROMETER_BLOCK_CAPACITY);
 			double[] accBlock = new double[Globals.ACCELEROMETER_BLOCK_CAPACITY];
@@ -519,80 +518,40 @@ public class TrackingService extends Service
 			FileOutputStream predictionFile = null;
 			// Use in case you want to collect data for training
 			FileOutputStream trainingDataFileStream = null;
-			
-			// last logged time for any activity
-			long lastNotedTime = 0;
-			// Time elapsed since last log
+
+			// Time elapsed since last buffer fill.
 			float timeElapsed;
 			// Correction parameter used while calculating time difference.
 			float timeCorrectionMillis;
-			//FileOutputStream accelerometerValueFileStream = null;
-			//FileOutputStream accelerometerMedianFileStream = null;
-			
 			// Delay between worker calls, the worker sets the final type and final sweat rate.
 			// milli seconds
-			final int delayBetweenWorkerCalls = 500;
+			final int delayBetweenWorkerCalls = 1000;
 
-			
 			// Memory card path.
 			File sdCard = Environment.getExternalStorageDirectory();
 			// Application path.
-    		String resultPredictor = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/predicted.txt";    
-    		// To do: code clean up
-    		// new code
-    		//String accelerometerValueLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/allValues.txt";
-    		//String accelerometerMedianLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/medianValues.txt";
-    		//String trainingDataLogger = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/t.txt";
-    		
-    		// SortedSet accelerometerReadings = new TreeSet();
-    		// Double[] accelerometerReadingArray;
+    		String resultPredictor = sdCard + "/Android/data/edu.dartmouth.cs.myruns5/files"  + "/predicted.txt";
     		File resultFile;
-    		// File accelerometerLogFile;
-    		// File accelerometerMedianFile;
-    		// File trainingDataFile;
 			try {
 				resultFile = new File(resultPredictor);
 				resultFile.createNewFile();
 				predictionFile = new FileOutputStream(resultFile);
-				 predictionFile.write("starting write".getBytes());
-                 predictionFile.flush();
-                 
-                  // new code
-                 // File used in case you need to log training data
-                 //trainingDataFile = new File(trainingDataLogger);
-                 // trainingDataFile.createNewFile();
-                 // trainingDataFileStream = new FileOutputStream(trainingDataFile);
-                 // trainingDataFileStream.write("starting training data activity \n".getBytes());
-                 // trainingDataFileStream.flush();
-                  
-                 
-                 // File used in case you need to log values to analyze accelerometer values.
-                 
-                 //accelerometerLogFile = new File(accelerometerValueLogger);
-                 //accelerometerLogFile.createNewFile();
-                 //accelerometerValueFileStream = new FileOutputStream(accelerometerLogFile);                 
-                 //accelerometerMedianFile = new File(accelerometerMedianLogger);
-                 //accelerometerMedianFile.createNewFile();
-                 //accelerometerMedianFileStream = new FileOutputStream(accelerometerMedianFile);
-                 
-                  
+				 predictionFile.write("starting write \n\n\n\n".getBytes());
+                 predictionFile.flush();      
 			} catch (Exception e) {
 				e.printStackTrace();
-			}
-			
+			}			
 			// Create the timer task implementor class object with an intial state.
 			// The various state values are required so that the timer task impelmentor can judiciously determine the dominant activity as per the latest trend.
 			UpdateFinalTypeTask updateTask = new UpdateFinalTypeTask(
 					mFinalInferredActivityTypeMap,
 					mActivityVsDurationMap,
 					mMotionUpdateBroadcast,
-					getApplicationContext(),delayBetweenWorkerCalls
+					getApplicationContext(),
+					delayBetweenWorkerCalls
 			);
-			updateFinalTypeTimer.schedule(updateTask,0,delayBetweenWorkerCalls);
-
-			// Note the time before first activity.
-			lastNotedTime = System.currentTimeMillis();
-			
+			updateFinalTypeTimer.schedule(updateTask,0,delayBetweenWorkerCalls);		
+           
 			while (true) {
 				
 				try {
@@ -627,20 +586,17 @@ public class TrackingService extends Service
 					if (blockSize == Globals.ACCELEROMETER_BLOCK_CAPACITY) {
 						//Recieved a full block/disable data collection						
 						pauseDataCollection();
-						
-						// Calculate time difference to calculate the activity duration.
-						long currentTime = System.currentTimeMillis();
+						bufferFillFinishTime = System.currentTimeMillis();
 						
 						// This gives the seconds difference
-						timeElapsed = TimeUnit.MILLISECONDS.toSeconds(currentTime - lastNotedTime) - 
-							    TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(currentTime - lastNotedTime));
-						
+						timeElapsed = TimeUnit.MILLISECONDS.toSeconds(bufferFillFinishTime) 
+								- TimeUnit.MILLISECONDS.toSeconds(bufferFillStartTime);
 						// Can either be positive or negative - used to correct the seconds difference.
-						timeCorrectionMillis = ((currentTime%1000) - (lastNotedTime%1000));
-						timeElapsed = timeElapsed + timeCorrectionMillis/1000;						
-						lastNotedTime = currentTime;
-						
-						
+						timeCorrectionMillis = ((bufferFillFinishTime%1000) - (bufferFillStartTime%1000));
+						// Correct the time with the milli second component, so for ex: if 2 times are 2.1 and 0.9
+						// Seconds difference would be 2. However the actual diff is 1.2 - which is adjusted by this component
+						timeElapsed = timeElapsed + (timeCorrectionMillis/1000);						
+						bufferFillStartTime = bufferFillFinishTime;
 						blockSize = 0;
 						
 						// time = System.currentTimeMillis();
@@ -655,32 +611,6 @@ public class TrackingService extends Service
 						fft.fft(re, im);
 						for (int i = 0; i < re.length; i++) {
 							double mag = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
-							
-							// New code, used for testing.
-							//accelerometerReadings.add(mag);
-							///String temp = String.valueOf(mag);
-							//String temp2 = temp.substring(0,6);
-							//accelerometerValueFileStream.write((temp2 + ",").getBytes());
-							//accelerometerValueFileStream.flush();
-							
-							/*accelerometerReadingArray =
-									Arrays.copyOf(
-											accelerometerReadings.toArray(),
-											accelerometerReadings.toArray().length, 
-											Double[].class
-											);
-							int medianIndex = (accelerometerReadingArray.length)/2;
-							double median = accelerometerReadingArray[medianIndex];
-							accelerometerMedianFileStream.write(("\n Median was:" + median).getBytes());
-							accelerometerMedianFileStream.flush();
-							
-							sumForMean = sumForMean + mag;
-							accelerometerMedianFileStream.write(("\n Mean was:" + (sumForMean/accelerometerReadingArray.length)).getBytes());
-							accelerometerMedianFileStream.flush();
-							
-							accelerometerMedianFileStream.write(("\n Current count is:" + (accelerometerReadingArray.length)).getBytes());
-							accelerometerMedianFileStream.flush();
-							*/
 							featVect.add(mag);
 							im[i] = .0; // Clear the field
 						}
@@ -694,26 +624,15 @@ public class TrackingService extends Service
 						Double currentDuration = mActivityVsDurationMap.containsKey(value) ? mActivityVsDurationMap.get(value):0;
 						mActivityVsDurationMap.put(value,currentDuration+timeElapsed);
 						updateTask.SetActivityDurationMap(mActivityVsDurationMap);
-						StringBuilder featureVectorString = new StringBuilder();
-						// For classification purpose
-						for(double featureVectorValue:featVect) {
-							featureVectorString.append(String.valueOf(featureVectorValue).substring(0,8));
-							featureVectorString.append(",");
-						}
-						// Training data.
-						featureVectorString.append("StandingWalking\n");
-						// trainingDataFileStream.write(featureVectorString.toString().getBytes());
-		                // trainingDataFileStream.flush();
-						Log.d("mag", String.valueOf(value));
 						
-
+						// For classification purpose
+						Log.d("mag", String.valueOf(value));
 						//JERRID: Infer motion type based upon majority vote------
 						int count = mInferredActivityTypeMap.containsKey(value) ? mInferredActivityTypeMap.get(value) : 0;
 						int currentCount = count + 1;
 						mInferredActivityTypeMap.put(value, currentCount);
 						// Increment inference count to handle sliding window mechanism.
 						inferenceCount++;
-						
 						
 						// New code.
 						// The count is regenerated each cycle.
@@ -742,24 +661,25 @@ public class TrackingService extends Service
 						//(ie: the current mean inference value weight counts for 2 of next 5 readings)
 
 	                	//int maxInferenceKey=-1,maxInferenceValue=-1;
-	                	
+						
+						// Log for testing activity durations.
+	                	/*
 						StringBuilder currentActivityBuilder2 = new StringBuilder();
-                		
-                		
-	                	
-                		currentActivityBuilder2.append("\n\nThe recorded duration activities so far:\n");
+						currentActivityBuilder2.append("\n\nThe recorded duration activities so far:\n");
                 		for (Map.Entry<Integer, Double> entry : mActivityVsDurationMap.entrySet()) {
                 			// List each activity along with count.
-                			currentActivityBuilder2.append(Globals.INFERENCE_LIST[entry.getKey()] + " totally occured " + entry.getValue() + "  amount of duration. \n");
+                			currentActivityBuilder2.append(Globals.INFERENCE_LIST[entry.getKey()] + " totally occured " + entry.getValue() + "  amount of duration. \n \n");
                 		}
                         predictionFile.write(currentActivityBuilder2.toString().getBytes());
-                        predictionFile.flush();
+                        predictionFile.flush();*/
                         
 	                	// Finished collection the 5 samples
 	                	// Now increase the weight of an activity based on the current dominant trend.
 		                if(inferenceCount == mMaxActivityInferenceWindow)  {
 		                	try {		
-		                		StringBuilder currentActivityBuilder = new StringBuilder();
+		                		
+		                		// Log for testing activity count.
+		                		/*StringBuilder currentActivityBuilder = new StringBuilder();
 		                		// List the current time.
 		                		currentActivityBuilder.append("\n\nTime:" + new SimpleDateFormat("yyyyMMdd_HHmmss").format(Calendar.getInstance().getTime()) + "\n");
 		                		// List the dominant activity
@@ -771,10 +691,7 @@ public class TrackingService extends Service
 		                			currentActivityBuilder.append(Globals.INFERENCE_LIST[entry.getKey()] + " occured " + entry.getValue() + " times. \n");
 		                		}
 		                        predictionFile.write(currentActivityBuilder.toString().getBytes());
-		                        predictionFile.flush();
-		                        
-		                        
-		                        
+		                        predictionFile.flush();*/
 		                    }
 		                    catch (Exception e) {
 		                    	//predictionFile.close();
@@ -785,7 +702,8 @@ public class TrackingService extends Service
 		                	mInferredActivityTypeMap.clear();
 		                	// For this activity get the current count in the mapping
 							// If the first time put it into a map with a count of 1.
-							 int finalTypeCount = mFinalInferredActivityTypeMap.containsKey(mInferredActivityType)?mInferredActivityTypeMap.get(mInferredActivityType):0;
+							 int finalTypeCount = 
+									 mFinalInferredActivityTypeMap.containsKey(mInferredActivityType)?mInferredActivityTypeMap.get(mInferredActivityType):0;
 							 mFinalInferredActivityTypeMap.put(mInferredActivityType, finalTypeCount + 1);
 		                	// New code.
 		                	// After clearing the entire map increased the weight for the current dominant trend.
@@ -1008,6 +926,7 @@ class UpdateFinalTypeTask extends TimerTask {
 	// To make sure the worker run only the first minute, set the maximum 
 	// no of calls to (60 seconds / delay in seconds)
 	// For ex if delay is set to 2 seconds, maximum no of calls = 60/2 = 30.
+	// actual count calculated in the constructor.
 	private int mCallCount = 0;
 	
 	// worker method
